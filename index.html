@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Sonic-like 액션 게임</title>
+  <title>Sonic-like 액션 게임 - 플레이어 애니메이션 추가</title>
   <style>
     /* 화면에 스크롤바가 뜨지 않고 캔버스가 꽉 차도록 설정 */
     body { margin: 0; overflow: hidden; }
@@ -19,7 +19,11 @@
     const levelWidth = 2000;
     let cameraX = 0;
 
-    // 플레이어 객체 (간단한 사각형으로 표현)
+    // 플레이어 스프라이트 로드
+    const playerSprite = new Image();
+    playerSprite.src = 'player.png'; // 스프라이트 시트 파일 (가로로 여러 프레임 배치)
+
+    // 플레이어 객체: 기존 사각형 대신 애니메이션 관련 속성 추가
     let player = {
       x: 50,
       y: canvas.height - 60,
@@ -29,7 +33,11 @@
       vy: 0,
       speed: 5,
       jumpStrength: 15,
-      onGround: false
+      onGround: false,
+      frameIndex: 0,    // 현재 애니메이션 프레임 인덱스
+      frameCount: 4,    // 스프라이트 시트에 있는 총 프레임 수 (예: 4)
+      frameCounter: 0,  // 프레임 전환을 위한 카운터
+      frameDelay: 5     // 몇 프레임마다 애니메이션 프레임 전환할지 결정 (숫자가 작을수록 빨리 전환)
     };
 
     const gravity = 0.8; // 중력 값
@@ -109,6 +117,20 @@
       cameraX = player.x - canvas.width / 2;
       if (cameraX < 0) cameraX = 0;
       if (cameraX > levelWidth - canvas.width) cameraX = levelWidth - canvas.width;
+
+      // 애니메이션 업데이트
+      // 플레이어가 움직이고 있을 때만 애니메이션 프레임 전환
+      if (player.vx !== 0) {
+        player.frameCounter++;
+        if (player.frameCounter >= player.frameDelay) {
+          player.frameIndex = (player.frameIndex + 1) % player.frameCount;
+          player.frameCounter = 0;
+        }
+      } else {
+        // 이동하지 않으면 정지 상태의 첫 프레임을 사용
+        player.frameIndex = 0;
+        player.frameCounter = 0;
+      }
     }
 
     // 게임 화면 그리기
@@ -134,9 +156,20 @@
         ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
       });
 
-      // 플레이어 그리기
-      ctx.fillStyle = 'blue';
-      ctx.fillRect(player.x, player.y, player.width, player.height);
+      // 플레이어 그리기 (스프라이트 이미지 사용)
+      // 스프라이트 시트의 각 프레임 너비를 계산 (스프라이트가 가로로 배열되어 있다고 가정)
+      const frameWidth = playerSprite.width / player.frameCount;
+      ctx.drawImage(
+        playerSprite,
+        player.frameIndex * frameWidth, // 소스 x: 현재 프레임의 시작 위치
+        0,                              // 소스 y (한 줄짜리 스프라이트라고 가정)
+        frameWidth,                     // 소스 너비
+        playerSprite.height,            // 소스 높이
+        player.x,                       // 캔버스 상 목적지 x
+        player.y,                       // 캔버스 상 목적지 y
+        player.width,                   // 그릴 때의 너비
+        player.height                   // 그릴 때의 높이
+      );
 
       ctx.restore();
     }
@@ -148,8 +181,10 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // 게임 시작
-    gameLoop();
+    // 스프라이트 이미지가 로드된 후 게임 시작
+    playerSprite.onload = function() {
+      gameLoop();
+    };
   </script>
 </body>
 </html>
