@@ -2,9 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Sonic-like 액션 게임 - 확장판 (상점/이미지/몬스터 추가)</title>
+  <title>Sonic-like 액션 게임 - 확장판 (수정판)</title>
   <style>
-    /* 캔버스는 화면에 꽉차게 */
+    /* 전체 화면에 꽉 채우기 */
     html, body {
       margin: 0;
       padding: 0;
@@ -19,7 +19,7 @@
 <body>
   <canvas id="gameCanvas"></canvas>
   <script>
-    // 캔버스 전면 세팅 (화면 꽉 채우기)
+    // 캔버스 전체 크기로 설정 (resize 이벤트 처리)
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
     function resizeCanvas() {
@@ -29,6 +29,12 @@
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
 
+    // 기본 게임 월드의 기준 해상도 (이 좌표계를 기준으로 스케일 적용)
+    const baseWidth = 800, baseHeight = 400;
+    function getScale() {
+      return Math.min(canvas.width / baseWidth, canvas.height / baseHeight);
+    }
+
     // ------------------------------
     // 글로벌 상수 및 이미지 로드
     // ------------------------------
@@ -37,7 +43,7 @@
     const baseGravity = 0.8;
     let currentGravity = baseGravity;
 
-    // 게임 시작시간 (플레이 타임 계산용)
+    // 게임 시작시간 (플레이 타임 측정용)
     const gameStartTime = Date.now();
 
     // 플레이어 이미지 (소닉)
@@ -83,16 +89,16 @@
     let coins = [];          // 코인들
     let groundSegments = []; // 땅 구간들 (type: safe, pit, spike)
     let monsters = [];       // 일반 몬스터들 (각 객체에 monsterType: 1,2,3)
-    let monsterMissiles = []; // 기본3 몬스터가 발사하는 미사일들
+    let monsterMissiles = []; // 타입3 몬스터가 발사하는 미사일들
     let boss = null;         // 보스 객체 (10스테이지마다 등장)
     let bossMissiles = [];   // 보스 미사일들
     let bullets = [];        // 플레이어 총알들
-    let teleport = null;     // 텔레포트 오브젝트 (포털)
+    let teleport = null;     // 텔레포트(포털) 오브젝트
 
     // 플레이어 객체
     let player = {
       x: 50,
-      y: canvas.height - 60,
+      y: baseHeight - 60,
       width: 40,
       height: 40,
       vx: 0,
@@ -109,7 +115,7 @@
       wing: 0
     };
 
-    // 레벨 너비 (ground, 플랫폼, 몬스터 배치 범위)
+    // 레벨 너비 (게임 월드 내 좌표 기준)
     let levelWidth = 2000;
 
     // 입력 상태
@@ -135,10 +141,11 @@
       }
       return null;
     }
+    // x 좌표의 땅 높이 (safe 또는 spike는 baseHeight-20)
     function getGroundY(x) {
       let seg = getGroundSegment(x);
       if (seg && (seg.type === "safe" || seg.type === "spike")) {
-        return canvas.height - 20;
+        return baseHeight - 20;
       }
       return null;
     }
@@ -146,9 +153,8 @@
     // ------------------------------
     // 스테이지(레벨) 로드 함수
     // ------------------------------
-    // 요청: 상점은 5스테이지마다 등장, 보스는 10스테이지마다 등장 (보스 > 상점 우선)
+    // 상점은 5스테이지마다, 보스는 10스테이지마다 등장 (보스 > 상점)
     function loadStage(s) {
-      // 초기화
       platforms = [];
       coins = [];
       groundSegments = [];
@@ -159,7 +165,30 @@
       bullets = [];
       teleport = null;
 
-      // 보스 스테이지 (10의 배수)
+      // 1스테이지는 특별하게 구성 (간단한 safe 땅, 낮은 플랫폼, 포털이 눈에 보이도록)
+      if (s === 1) {
+        levelWidth = 800;  // 1스테이지는 짧게
+        groundSegments = [{ x: 0, width: levelWidth, type: "safe" }];
+        platforms = [{ x: levelWidth - 200, y: baseHeight - 60, width: 100, height: 10 }];
+        teleport = { x: levelWidth - 200, y: baseHeight - 60 - 50, width: 50, height: 50 };
+        coins = [];
+        let coinCount = 3;
+        for (let i = 0; i < coinCount; i++) {
+          let coinX = Math.random() * (levelWidth - 200) + 200;
+          let coinY = baseHeight - 100;
+          coins.push({ x: coinX, y: coinY, radius: 10, collected: false });
+        }
+        monsters = [];
+        monsters.push({ x: 400, y: baseHeight - 20 - 30, width: 30, height: 30, vx: baseSpeed, monsterType: 1 });
+        player.x = 50;
+        player.y = baseHeight - 60;
+        player.vx = 0;
+        player.vy = 0;
+        player.jumpsLeft = 2;
+        return;
+      }
+
+      // 상점 모드: 5스테이지마다 (단, 보스 스테이지가 아닌 경우)
       if (s % 10 === 0) {
         inShop = false;
       } else if (s % 5 === 0) {
@@ -168,29 +197,25 @@
         inShop = false;
       }
 
-      // 상점 모드 처리
       if (inShop) {
-        // 상점에서는 플레이어를 중앙에 배치 (움직임은 제한하지 않아도 됨)
-        player.x = canvas.width / 2 - player.width / 2;
-        player.y = canvas.height - 60;
+        player.x = baseWidth / 2 - player.width / 2;
+        player.y = baseHeight - 60;
         player.vx = 0;
         player.vy = 0;
         player.jumpsLeft = 2;
         return;
       }
 
-      // 일반/보스 스테이지 구성
+      // 일반 또는 보스 스테이지 구성
       levelWidth = 2000 + s * 50;
 
       // 1. 땅(groundSegments) 생성  
-      // 시작 구간 (0~200)은 반드시 safe
       let x = 0;
       while (x < levelWidth) {
         let segWidth = Math.floor(Math.random() * 100) + 100; // 100~200
         if (x < 200) {
           groundSegments.push({ x: x, width: segWidth, type: "safe" });
         } else {
-          // pit, spike 확률은 스테이지가 올라갈수록 증가 (최대 30%)
           let pitChance = Math.min(0.1 + s * 0.01, 0.3);
           let spikeChance = Math.min(0.1 + s * 0.01, 0.3);
           let rnd = Math.random();
@@ -205,27 +230,26 @@
         x += segWidth;
       }
 
-      // 2. 플랫폼 생성 (공중 발판; 5~10개)
+      // 2. 플랫폼 생성 (5~10개)
       let platCount = Math.floor(Math.random() * 6) + 5;
       let currentX = 300;
       for (let i = 0; i < platCount; i++) {
         let gap = Math.floor(Math.random() * 150) + 100;
         currentX += gap;
-        let y = Math.floor(Math.random() * (canvas.height - 150)) + 50;
+        let y = Math.floor(Math.random() * (baseHeight - 150)) + 50;
         platforms.push({ x: currentX, y: y, width: 100, height: 10 });
       }
 
-      // 3. 코인 생성 (3~7개; 시작영역(x<200)은 제외)
+      // 3. 코인 생성 (3~7개; x < 200 제외)
       coins = [];
       let coinCount = Math.floor(Math.random() * 5) + 3;
       for (let i = 0; i < coinCount; i++) {
         let coinX = Math.random() * (levelWidth - 200) + 200;
-        let coinY = Math.random() * (canvas.height - 200) + 50;
+        let coinY = Math.random() * (baseHeight - 200) + 50;
         coins.push({ x: coinX, y: coinY, radius: 10, collected: false });
       }
 
       // 4. 텔레포트(포털) 생성  
-      // 텔레포트는 마지막 safe ground 구간 중앙에 배치하고, 크기는 포털 이미지가 잘리지 않도록 조정
       let lastSafe = null;
       for (let seg of groundSegments) {
         if (seg.type === "safe") lastSafe = seg;
@@ -233,18 +257,17 @@
       if (!lastSafe) lastSafe = groundSegments[groundSegments.length - 1];
       teleport = {
         x: lastSafe.x + lastSafe.width / 2 - 25,
-        y: canvas.height - 20 - 50,
+        y: baseHeight - 20 - 50,
         width: 50,
         height: 50
       };
 
       // 5. 몬스터 생성  
-      // 보스 스테이지 (10의 배수)
       if (s % 10 === 0) {
-        // 보스: 크기를 기본 몬스터(30x30)보다 4-5배 크게, 보스 위치는 levelWidth의 오른쪽 쪽
+        // 보스 스테이지: 보스는 기본 몬스터보다 4~5배 크게
         boss = {
           x: levelWidth - 300,
-          y: canvas.height - 20 - 150,
+          y: baseHeight - 20 - 150,
           width: 150,
           height: 150,
           health: 10 + s,
@@ -253,16 +276,11 @@
         };
         bossMissiles = [];
       } else {
-        // 일반 몬스터: 최소 1마리부터 stage에 따라 증가  
-        // 몬스터는 시작 영역(x < 300)은 피하도록 함.
         let monsterCount = Math.floor(s / 2) + 1;
         for (let i = 0; i < monsterCount; i++) {
-          // 무작위 위치: x는 300 이상, levelWidth의 90% 미만
           let mX = Math.random() * ((levelWidth * 0.9) - 300) + 300;
-          let mY = canvas.height - 20 - 30;  // 기본 y
-          // 속도는 stage에 따라 조금 증가
+          let mY = baseHeight - 20 - 30;
           let mSpeed = (Math.random() * 2 + 1) + s * 0.1;
-          // 무작위로 몬스터 타입 결정: 1, 2, 3 (각각 행동 다름)
           let rndType = Math.random();
           let monsterType;
           if (rndType < 0.33) monsterType = 1;
@@ -277,38 +295,37 @@
             monsterType: monsterType
           };
           if (monsterType === 2) {
-            // 타입2: 주기적 점프를 위한 타이머
             monster.jumpTimer = Date.now() + Math.random()*2000 + 2000;
             monster.vy = 0;
           }
           if (monsterType === 3) {
-            // 타입3: 주기적 미사일 발사용 타이머
             monster.missileTimer = Date.now() + Math.random()*2000 + 3000;
           }
           monsters.push(monster);
         }
       }
 
-      // 6. 플레이어 초기 배치: 시작 구역 x=50, y는 해당 ground 높이 (없으면 기본 위치)
+      // 6. 플레이어 초기 배치 (시작 영역)
       player.x = 50;
       let gY = getGroundY(player.x + player.width/2);
-      player.y = (gY !== null ? gY - player.height : canvas.height - 60);
+      player.y = (gY !== null ? gY - player.height : baseHeight - 60);
       player.vx = 0;
       player.vy = 0;
       player.jumpsLeft = 2;
     }
 
     // ------------------------------
-    // 플레이어 사망 (충돌/낙하 시) – 돈과 인벤토리는 유지하고 현재 스테이지에서 재시작
+    // 플레이어 사망 처리  
+    // (점수와 인벤토리는 유지하고 현재 스테이지에서 재시작)
     function death() {
       console.log("플레이어 사망! 스테이지 " + stage + "에서 재시작");
       if (inShop) {
-        player.x = canvas.width / 2 - player.width / 2;
-        player.y = canvas.height - 60;
+        player.x = baseWidth / 2 - player.width / 2;
+        player.y = baseHeight - 60;
       } else {
         player.x = 50;
         let gY = getGroundY(50 + player.width/2);
-        player.y = (gY !== null ? gY - player.height : canvas.height - 60);
+        player.y = (gY !== null ? gY - player.height : baseHeight - 60);
       }
       player.vx = 0;
       player.vy = 0;
@@ -317,7 +334,7 @@
 
     // ------------------------------
     // 상점 모드 업데이트  
-    // 화살표 위/아래로 메뉴 선택, 엔터로 아이템 구매 또는 "상점 종료" 선택 시 다음 스테이지로 진행
+    // (화살표 위/아래로 메뉴 선택, 엔터로 아이템 구매 또는 "상점 종료" 선택 시 다음 스테이지 진행)
     function updateShop() {
       if (keys["ArrowUp"]) {
         shopSelection--;
@@ -332,7 +349,6 @@
       if (keys["Enter"]) {
         let selected = shopMenu[shopSelection];
         if (selected.name === "상점 종료") {
-          // 상점 종료 시 다음 스테이지로 진행
           stage++;
           loadStage(stage);
         } else {
@@ -370,7 +386,7 @@
         currentGravity = baseGravity;
       }
 
-      // 좌우 이동 및 방향 설정
+      // 좌우 이동 및 facing
       if (keys["ArrowRight"] || keys["KeyD"]) {
         player.vx = effectiveSpeed;
         player.facing = 1;
@@ -401,7 +417,7 @@
         player.vy += currentGravity;
       }
 
-      // 플레이어 이동 업데이트
+      // 플레이어 위치 업데이트
       player.x += player.vx;
       player.y += player.vy;
 
@@ -423,9 +439,9 @@
       // 땅(ground) 충돌 처리 (플레이어 중앙의 땅 구간)
       let gY = getGroundY(player.x + player.width/2);
       if (gY !== null) {
-        // spike 구간이면 즉시 사망
         let seg = getGroundSegment(player.x + player.width/2);
-        if (seg && seg.type === "spike") {
+        // 가시 구간일 경우, 플레이어가 떨어지며(즉, vy ≥ 0) 바닥과의 차이가 10픽셀 미만이면 사망
+        if (seg && seg.type === "spike" && player.vy >= 0 && (player.y + player.height - gY) < 10) {
           death();
           return;
         }
@@ -440,7 +456,7 @@
       // 레벨 경계 처리
       if (player.x < 0) player.x = 0;
       if (player.x + player.width > levelWidth) player.x = levelWidth - player.width;
-      if (player.y > canvas.height) { death(); return; }
+      if (player.y > baseHeight) { death(); return; }
 
       // 코인 획득
       for (let coin of coins) {
@@ -454,32 +470,30 @@
         }
       }
 
-      // 텔레포트(포털) 충돌 – 포털 이미지가 화면에 잘리지 않도록 크기를 조정한 상태에서 처리
+      // 텔레포트(포털) 충돌 – 포털 이미지 크기(50×50)를 고려
       if (teleport &&
           player.x < teleport.x + teleport.width &&
           player.x + player.width > teleport.x &&
           player.y < teleport.y + teleport.height &&
           player.y + player.height > teleport.y) {
-        score += 100;  // 포털 도달 시 100점 추가 (원래 트로피 역할)
+        score += 100;  // 포털 도달 시 100점 추가
         stage++;
         loadStage(stage);
         return;
       }
 
-      // 몬스터 업데이트  
+      // 몬스터 업데이트
       for (let m of monsters) {
-        // 모든 몬스터는 수평 이동
         m.x += m.vx;
         if (m.x < 300 || m.x + m.width > levelWidth) { m.vx *= -1; }
-        // 타입별 행동 처리
+        // 타입2: 주기적 점프
         if (m.monsterType === 2) {
-          // 타입2: 주기적 점프
           if (Date.now() > m.jumpTimer) {
-            m.vy = -5;  // 점프 속도 (조절 가능)
+            m.vy = -5;
             m.jumpTimer = Date.now() + (Math.random()*2000 + 2000);
           }
           m.vy = (m.vy || 0) + baseGravity;
-          let groundY = canvas.height - 20;
+          let groundY = baseHeight - 20;
           if (m.y + m.height + m.vy > groundY) {
             m.y = groundY - m.height;
             m.vy = 0;
@@ -487,8 +501,8 @@
             m.y += m.vy;
           }
         }
+        // 타입3: 주기적 미사일 발사
         if (m.monsterType === 3) {
-          // 타입3: 주기적 미사일 발사
           if (Date.now() > m.missileTimer) {
             let missileSpeed = 4;
             let angle = Math.atan2(player.y - m.y, player.x - m.x);
@@ -498,7 +512,6 @@
             m.missileTimer = Date.now() + (Math.random()*2000 + 3000);
           }
         }
-        // 플레이어와 충돌 시 사망
         if (rectsOverlap(player, m)) { death(); return; }
       }
 
@@ -507,7 +520,7 @@
         let missile = monsterMissiles[i];
         missile.x += missile.vx;
         missile.y += missile.vy;
-        if (missile.x < 0 || missile.x > levelWidth || missile.y < 0 || missile.y > canvas.height) {
+        if (missile.x < 0 || missile.x > levelWidth || missile.y < 0 || missile.y > baseHeight) {
           monsterMissiles.splice(i, 1);
           continue;
         }
@@ -533,7 +546,7 @@
           let missile = bossMissiles[i];
           missile.x += missile.vx;
           missile.y += missile.vy;
-          if (missile.x < 0 || missile.x > levelWidth || missile.y < 0 || missile.y > canvas.height) {
+          if (missile.x < 0 || missile.x > levelWidth || missile.y < 0 || missile.y > baseHeight) {
             bossMissiles.splice(i, 1);
             continue;
           }
@@ -541,16 +554,15 @@
         }
       }
 
-      // 플레이어 총알 업데이트 (마우스 좌클릭으로 발사)
+      // 플레이어 총알 업데이트 (마우스 좌클릭)
       for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += b.vx;
         b.y += b.vy;
-        if (b.x < 0 || b.x > levelWidth || b.y < 0 || b.y > canvas.height) {
+        if (b.x < 0 || b.x > levelWidth || b.y < 0 || b.y > baseHeight) {
           bullets.splice(i, 1);
           continue;
         }
-        // 총알이 몬스터(일반)와 충돌하면 제거
         for (let j = monsters.length - 1; j >= 0; j--) {
           if (rectsOverlap(b, monsters[j])) {
             monsters.splice(j, 1);
@@ -558,7 +570,6 @@
             break;
           }
         }
-        // 보스 충돌 체크
         if (boss && rectsOverlap(b, boss)) {
           boss.health -= 1;
           bullets.splice(i, 1);
@@ -569,7 +580,7 @@
         }
       }
 
-      // 인벤토리 활성화: 키 "Digit1"~"Digit0" (0은 10번 슬롯)
+      // 인벤토리 활성화: "Digit1" ~ "Digit0" (0은 10번 슬롯)
       for (let key in keys) {
         if (keys[key] && key.startsWith("Digit")) {
           let num = parseInt(key.replace("Digit", ""));
@@ -577,7 +588,7 @@
           let index = num - 1;
           if (index >= 0 && index < inventory.length) {
             let item = inventory[index];
-            powerUps[item.id] = Date.now() + 10000;  // 10초 효과
+            powerUps[item.id] = Date.now() + 10000; // 10초 효과
             console.log(item.name + " 활성화!");
             inventory.splice(index, 1);
             keys[key] = false;
@@ -618,9 +629,14 @@
     // ------------------------------
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // 배경 채우기
+      // 전체 배경 채우기
       ctx.fillStyle = "#87CEEB";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // 전체 게임월드(기준: baseWidth×baseHeight) 좌표계에 맞춰 스케일 적용
+      let scale = getScale();
+      ctx.save();
+      ctx.scale(scale, scale);
       
       if (inShop) {
         drawShop();
@@ -629,14 +645,15 @@
       }
       
       drawUI();
+      ctx.restore();
     }
 
-    // 일반 게임 그리기 (카메라 적용)
+    // 일반 게임 그리기 (카메라 적용: base 좌표 기준)
     function drawGame() {
-      // 카메라: 플레이어를 중심으로 좌우 스크롤
-      let cameraX = player.x - canvas.width / 2;
+      // 카메라: 플레이어를 중심으로 (기준 해상도: baseWidth)
+      let cameraX = player.x - baseWidth / 2;
       if (cameraX < 0) cameraX = 0;
-      if (cameraX > levelWidth - canvas.width) cameraX = levelWidth - canvas.width;
+      if (cameraX > levelWidth - baseWidth) cameraX = levelWidth - baseWidth;
       ctx.save();
       ctx.translate(-cameraX, 0);
       
@@ -644,16 +661,16 @@
       for (let seg of groundSegments) {
         if (seg.type === "safe") {
           ctx.fillStyle = "#654321";
-          ctx.fillRect(seg.x, canvas.height - 20, seg.width, 20);
+          ctx.fillRect(seg.x, baseHeight - 20, seg.width, 20);
         } else if (seg.type === "spike") {
           ctx.fillStyle = "#654321";
-          ctx.fillRect(seg.x, canvas.height - 20, seg.width, 20);
+          ctx.fillRect(seg.x, baseHeight - 20, seg.width, 20);
           ctx.fillStyle = "gray";
           let spikeCount = Math.floor(seg.width / 20);
           for (let i = 0; i < spikeCount; i++) {
             ctx.beginPath();
             let spikeX = seg.x + i * 20 + 10;
-            let spikeY = canvas.height - 20;
+            let spikeY = baseHeight - 20;
             ctx.moveTo(spikeX - 5, spikeY);
             ctx.lineTo(spikeX, spikeY - 15);
             ctx.lineTo(spikeX + 5, spikeY);
@@ -661,7 +678,7 @@
           }
         } else if (seg.type === "pit") {
           ctx.fillStyle = "#000";
-          ctx.fillRect(seg.x, canvas.height - 20, seg.width, 20);
+          ctx.fillRect(seg.x, baseHeight - 20, seg.width, 20);
         }
       }
       
@@ -681,12 +698,12 @@
         }
       }
       
-      // 텔레포트(포털) 그리기 – 이미지로 표시, 크기와 위치는 teleport 객체 사용
+      // 텔레포트(포털) 그리기 – 이미지 사용
       if (teleport) {
         ctx.drawImage(teleportImage, teleport.x, teleport.y, teleport.width, teleport.height);
       }
       
-      // 몬스터 그리기
+      // 몬스터 그리기 (타입별 이미지)
       for (let m of monsters) {
         if (m.monsterType === 1) {
           ctx.drawImage(monster1Image, m.x, m.y, m.width, m.height);
@@ -705,7 +722,6 @@
       
       // 보스 그리기
       if (boss) {
-        // 보스 이미지를 좀 더 크게 (boss.width, boss.height)
         ctx.drawImage(bossImage, boss.x, boss.y, boss.width, boss.height);
         ctx.fillStyle = "white";
         ctx.font = "16px Arial";
@@ -724,32 +740,30 @@
         ctx.fillRect(b.x, b.y, b.width, b.height);
       }
       
-      // 플레이어 그리기 – playerImage를 사용 (적절히 크기 조절)
+      // 플레이어 그리기 (소닉 이미지)
       ctx.drawImage(playerImage, player.x, player.y, player.width, player.height);
       
       ctx.restore();
     }
 
-    // 상점 화면 그리기 (메뉴 텍스트와 함께 각 아이템 이미지 표시)
+    // 상점 화면 그리기 (메뉴 항목별로 아이템 이미지와 텍스트 표시)
     function drawShop() {
       ctx.fillStyle = "black";
       ctx.font = "30px Arial";
-      ctx.fillText("상점", canvas.width / 2 - 40, 50);
+      ctx.fillText("상점", baseWidth / 2 - 40, 50);
       ctx.font = "20px Arial";
       for (let i = 0; i < shopMenu.length; i++) {
         let item = shopMenu[i];
         let text = item.name + (item.price ? " (" + item.price + "원)" : "");
         ctx.fillStyle = (i === shopSelection) ? "red" : "black";
-        // 메뉴 항목 배치: 왼쪽에 이미지, 오른쪽에 텍스트
         let imgX = 50;
         let imgY = 80 + i * 60;
         if (item.img) {
-          // 50x50 크기로 이미지 표시
-          ctx.drawImage(new Image().src = item.img, imgX, imgY, 50, 50);
-          // (아래와 같이 placeholder로 처리하는 방법도 있음)
-          // 또는 미리 생성한 Image 객체를 shopMenu에 넣을 수도 있음.
+          // 미리 생성한 Image 객체 대신, 새로운 Image 객체를 사용 (간단한 예시)
+          let img = new Image();
+          img.src = item.img;
+          ctx.drawImage(img, imgX, imgY, 50, 50);
         } else {
-          // "상점 종료" 등 이미지가 없는 경우
           ctx.strokeStyle = "black";
           ctx.strokeRect(imgX, imgY, 50, 50);
         }
@@ -759,7 +773,7 @@
       ctx.fillText("현재 소지금: " + score + "원", 50, 80 + shopMenu.length * 60 + 20);
     }
 
-    // UI 그리기 – 점수, 스테이지, 게임 플레이 시간, 인벤토리(상단 좌측)
+    // UI 그리기 – 점수, 스테이지, 플레이 타임, 인벤토리 (화면 상단 오른쪽)
     function drawUI() {
       ctx.fillStyle = "black";
       ctx.font = "20px Arial";
@@ -768,16 +782,15 @@
       let playTime = Math.floor((Date.now() - gameStartTime) / 1000);
       ctx.fillText("플레이 타임: " + playTime + "초", 20, 90);
       
-      // 인벤토리를 화면 상단 오른쪽에 표시 (슬롯 10칸)
+      // 인벤토리 (슬롯 10칸) – 화면 상단 오른쪽에 배치
       let slotSize = 40;
-      let startX = canvas.width - (slotSize + 10) * 10 - 20;
+      let startX = baseWidth - (slotSize + 10) * 10 - 20;
       let y = 20;
       for (let i = 0; i < 10; i++) {
         ctx.strokeStyle = "black";
         ctx.strokeRect(startX + i * (slotSize + 10), y, slotSize, slotSize);
         if (i < inventory.length) {
           let item = inventory[i];
-          // 인벤토리 아이템 이미지는  slot 안에 표시
           let img = new Image();
           img.src = item.img;
           ctx.drawImage(img, startX + i * (slotSize + 10) + 5, y + 5, slotSize - 10, slotSize - 10);
