@@ -2,9 +2,8 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Sonic-like 액션 게임 - 플레이어 애니메이션 추가</title>
+  <title>Sonic-like 액션 게임 - 스테이지, 트로피, 더블점프 추가</title>
   <style>
-    /* 화면에 스크롤바가 뜨지 않고 캔버스가 꽉 차도록 설정 */
     body { margin: 0; overflow: hidden; }
     canvas { display: block; background: #87CEEB; }
   </style>
@@ -15,15 +14,20 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // 전체 레벨의 너비 (캔버스보다 넓어서 스크롤 효과를 줄 수 있음)
-    const levelWidth = 2000;
-    let cameraX = 0;
+    // 전역 게임 변수
+    let stage = 1;               // 현재 스테이지 (1 ~ 3)
+    let platforms = [];          // 스테이지 내 벽돌(플랫폼) 배열
+    let trophy = {               // 트로피 객체 (정상에 위치)
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 20
+    };
+    let levelWidth = 2000;       // 전체 레벨 너비 (스테이지마다 변경)
+    let cameraX = 0;             // 카메라(화면 스크롤) x좌표
+    let gameCompleted = false;   // 3스테이지 클리어 여부
 
-    // 플레이어 스프라이트 로드
-    const playerSprite = new Image();
-    playerSprite.src = 'https://pngimg.com/d/sonic_hedgehog_PNG36.png'; // 스프라이트 시트 파일 (가로로 여러 프레임 배치)
-
-    // 플레이어 객체: 기존 사각형 대신 애니메이션 관련 속성 추가
+    // 플레이어 객체 (더블점프를 위한 jumpsLeft 추가)
     let player = {
       x: 50,
       y: canvas.height - 60,
@@ -34,36 +38,92 @@
       speed: 5,
       jumpStrength: 15,
       onGround: false,
-      frameIndex: 0,    // 현재 애니메이션 프레임 인덱스
-      frameCount: 4,    // 스프라이트 시트에 있는 총 프레임 수 (예: 4)
-      frameCounter: 0,  // 프레임 전환을 위한 카운터
-      frameDelay: 5     // 몇 프레임마다 애니메이션 프레임 전환할지 결정 (숫자가 작을수록 빨리 전환)
+      jumpsLeft: 2,  // 지면에서 점프 후 추가로 1회 더 점프 가능 (총 2번 점프)
+      // 애니메이션 관련 속성(추후 스프라이트 사용 시)
+      frameIndex: 0,
+      frameCount: 4,
+      frameCounter: 0,
+      frameDelay: 5
     };
 
-    const gravity = 0.8; // 중력 값
+    const gravity = 0.8; // 중력
 
-    // 키보드 입력 상태 저장
+    // 점프 키 중복 실행 방지를 위한 변수
+    let jumpPressed = false;
+
+    // 키 입력 처리
     let keys = {};
-    window.addEventListener('keydown', (e) => {
-      keys[e.code] = true;
-    });
-    window.addEventListener('keyup', (e) => {
-      keys[e.code] = false;
-    });
+    window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-    // 레벨 내 여러 플랫폼 (x, y, width, height)
-    let platforms = [
-      { x: 200,  y: canvas.height - 100, width: 100, height: 10 },
-      { x: 500,  y: canvas.height - 150, width: 100, height: 10 },
-      { x: 800,  y: canvas.height - 200, width: 100, height: 10 },
-      { x: 1100, y: canvas.height - 150, width: 100, height: 10 },
-      { x: 1400, y: canvas.height - 100, width: 100, height: 10 },
-      { x: 1700, y: canvas.height - 150, width: 100, height: 10 }
-    ];
+    // 스테이지 로드 함수: 스테이지 번호에 따라 플랫폼 배열과 트로피 위치를 설정
+    function loadStage(s) {
+      platforms = [];  // 기존 플랫폼 초기화
+      if (s === 1) {
+        // [스테이지 1] : 2층 높이, 5개의 벽돌로 구성된 간단한 스테이지
+        platforms.push({ x: 150, y: canvas.height - 100, width: 100, height: 10 });
+        platforms.push({ x: 300, y: canvas.height - 160, width: 100, height: 10 });
+        platforms.push({ x: 450, y: canvas.height - 100, width: 100, height: 10 });
+        platforms.push({ x: 600, y: canvas.height - 160, width: 100, height: 10 });
+        platforms.push({ x: 750, y: canvas.height - 100, width: 100, height: 10 });
+        // 트로피는 2층에 위치한 두 번째 벽돌 위에 배치
+        trophy.x = platforms[1].x + platforms[1].width / 2 - trophy.width / 2;
+        trophy.y = platforms[1].y - trophy.height;
+        levelWidth = 750 + 100 + 150;  // 마지막 벽돌 위치 + 여유분
+        // 플레이어 초기 위치 및 더블점프 초기화
+        player.x = 50;
+        player.y = canvas.height - 60;
+        player.jumpsLeft = 2;
+      } else if (s === 2) {
+        // [스테이지 2] : 벽돌 간의 간격이 넓어지고, 수직 위치가 랜덤으로 배치됨
+        const count = 7;
+        let currentX = 150;
+        for (let i = 0; i < count; i++) {
+          // x 간격: 150 ~ 250 사이
+          let gap = Math.floor(Math.random() * 100) + 150;
+          if (i > 0) currentX += gap;
+          // y 위치: 200 ~ 320 (canvas.height=400, 지면은 canvas.height-20)
+          let y = Math.floor(Math.random() * (320 - 200 + 1)) + 200;
+          platforms.push({ x: currentX, y: y, width: 100, height: 10 });
+        }
+        let lastPlat = platforms[platforms.length - 1];
+        trophy.x = lastPlat.x + lastPlat.width / 2 - trophy.width / 2;
+        trophy.y = lastPlat.y - trophy.height;
+        levelWidth = currentX + 100 + 150;
+        player.x = 50;
+        player.y = canvas.height - 60;
+        player.jumpsLeft = 2;
+      } else if (s === 3) {
+        // [스테이지 3] : 높이가 더 높아지고, 간격이 좁거나 넓은 랜덤 배치
+        const count = 8;
+        let currentX = 150;
+        for (let i = 0; i < count; i++) {
+          // x 간격: 100 ~ 300 사이
+          let gap = Math.floor(Math.random() * 200) + 100;
+          if (i > 0) currentX += gap;
+          // y 위치: 100 ~ 320 (더 높은 높이의 플랫폼도 등장)
+          let y = Math.floor(Math.random() * (320 - 100 + 1)) + 100;
+          platforms.push({ x: currentX, y: y, width: 100, height: 10 });
+        }
+        let lastPlat = platforms[platforms.length - 1];
+        trophy.x = lastPlat.x + lastPlat.width / 2 - trophy.width / 2;
+        trophy.y = lastPlat.y - trophy.height;
+        levelWidth = currentX + 100 + 150;
+        player.x = 50;
+        player.y = canvas.height - 60;
+        player.jumpsLeft = 2;
+      }
+      console.log("Stage " + s + " loaded. Level width:", levelWidth);
+    }
+
+    // 첫번째 스테이지 초기화
+    loadStage(stage);
 
     // 게임 상태 업데이트
     function update() {
-      // 좌우 이동 (방향키 또는 WASD)
+      if (gameCompleted) return;  // 게임 클리어 시 업데이트 중단
+
+      // 좌우 이동
       if (keys['ArrowRight'] || keys['KeyD']) {
         player.vx = player.speed;
       } else if (keys['ArrowLeft'] || keys['KeyA']) {
@@ -72,10 +132,18 @@
         player.vx = 0;
       }
 
-      // 점프 (위쪽 방향키, W, 또는 스페이스바)
-      if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && player.onGround) {
-        player.vy = -player.jumpStrength;
-        player.onGround = false;
+      // 더블점프 로직
+      // 점프키(위 방향, W, 스페이스)가 새로 눌렸을 때 실행 (한 번만 처리)
+      if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && !jumpPressed) {
+        if (player.jumpsLeft > 0) {
+          player.vy = -player.jumpStrength;
+          player.jumpsLeft--;
+          jumpPressed = true;
+        }
+      }
+      // 점프키가 눌리지 않으면 jumpPressed 플래그 리셋
+      if (!(keys['ArrowUp'] || keys['KeyW'] || keys['Space'])) {
+        jumpPressed = false;
       }
 
       // 중력 적용
@@ -85,10 +153,10 @@
       player.x += player.vx;
       player.y += player.vy;
 
-      // 매 프레임마다 착지 여부 초기화
+      // 착지 여부 초기화
       player.onGround = false;
 
-      // 플랫폼과의 충돌 처리 (플랫폼 위로 착지하는 경우)
+      // 플랫폼 충돌 처리 (플랫폼 위에 착지)
       platforms.forEach((plat) => {
         if (
           player.x < plat.x + plat.width &&
@@ -102,76 +170,83 @@
         }
       });
 
-      // 바닥(지면)과의 충돌 처리 – 지면은 캔버스 하단에서 20px 위쪽에 위치
+      // 지면(바닥)과 충돌 처리 – 지면은 canvas 하단에서 20px 위쪽
       if (player.y + player.height > canvas.height - 20) {
         player.y = canvas.height - 20 - player.height;
         player.vy = 0;
         player.onGround = true;
       }
 
+      // 지면에 닿으면 더블점프 초기화
+      if (player.onGround) {
+        player.jumpsLeft = 2;
+      }
+
       // 레벨 경계 처리
       if (player.x < 0) player.x = 0;
       if (player.x + player.width > levelWidth) player.x = levelWidth - player.width;
 
-      // 카메라(화면 스크롤) 업데이트: 플레이어를 중심으로 이동
+      // 카메라(화면 스크롤): 플레이어를 중심으로 이동
       cameraX = player.x - canvas.width / 2;
       if (cameraX < 0) cameraX = 0;
       if (cameraX > levelWidth - canvas.width) cameraX = levelWidth - canvas.width;
 
-      // 애니메이션 업데이트
-      // 플레이어가 움직이고 있을 때만 애니메이션 프레임 전환
-      if (player.vx !== 0) {
-        player.frameCounter++;
-        if (player.frameCounter >= player.frameDelay) {
-          player.frameIndex = (player.frameIndex + 1) % player.frameCount;
-          player.frameCounter = 0;
+      // 트로피 충돌 체크 (플레이어가 트로피에 닿으면 스테이지 전환)
+      if (
+        player.x < trophy.x + trophy.width &&
+        player.x + player.width > trophy.x &&
+        player.y < trophy.y + trophy.height &&
+        player.y + player.height > trophy.y
+      ) {
+        if (stage < 3) {
+          stage++;
+          loadStage(stage);
+        } else {
+          gameCompleted = true;
+          console.log("게임 클리어!");
         }
-      } else {
-        // 이동하지 않으면 정지 상태의 첫 프레임을 사용
-        player.frameIndex = 0;
-        player.frameCounter = 0;
       }
     }
 
-    // 게임 화면 그리기
+    // 화면 그리기 함수
     function draw() {
       // 캔버스 전체 지우기
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 배경(하늘) 그리기
+      // 배경 그리기
       ctx.fillStyle = '#87CEEB';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // 카메라 이동 적용: 모든 게임 오브젝트는 레벨 좌표 기준으로 그려짐
+      // 카메라 적용 (레벨 좌표 기준으로 그리기)
       ctx.save();
       ctx.translate(-cameraX, 0);
 
-      // 지면 그리기 (전체 레벨 너비)
+      // 지면 그리기
       ctx.fillStyle = '#654321';
       ctx.fillRect(0, canvas.height - 20, levelWidth, 20);
 
-      // 플랫폼 그리기
+      // 플랫폼(벽돌) 그리기
       platforms.forEach((plat) => {
         ctx.fillStyle = '#8B4513';
         ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
       });
 
-      // 플레이어 그리기 (스프라이트 이미지 사용)
-      // 스프라이트 시트의 각 프레임 너비를 계산 (스프라이트가 가로로 배열되어 있다고 가정)
-      const frameWidth = playerSprite.width / player.frameCount;
-      ctx.drawImage(
-        playerSprite,
-        player.frameIndex * frameWidth, // 소스 x: 현재 프레임의 시작 위치
-        0,                              // 소스 y (한 줄짜리 스프라이트라고 가정)
-        frameWidth,                     // 소스 너비
-        playerSprite.height,            // 소스 높이
-        player.x,                       // 캔버스 상 목적지 x
-        player.y,                       // 캔버스 상 목적지 y
-        player.width,                   // 그릴 때의 너비
-        player.height                   // 그릴 때의 높이
-      );
+      // 트로피 그리기 (금색 사각형)
+      ctx.fillStyle = 'gold';
+      ctx.fillRect(trophy.x, trophy.y, trophy.width, trophy.height);
+
+      // 플레이어 그리기 (파란색 사각형; 필요 시 스프라이트로 교체 가능)
+      ctx.fillStyle = 'blue';
+      ctx.fillRect(player.x, player.y, player.width, player.height);
 
       ctx.restore();
+
+      // 게임 클리어 시 화면 중앙에 메시지 출력
+      if (gameCompleted) {
+        ctx.fillStyle = 'black';
+        ctx.font = '40px Arial';
+        ctx.fillText("게임 클리어!", canvas.width / 2 - 100, canvas.height / 2);
+      }
     }
 
     // 메인 게임 루프
@@ -181,10 +256,7 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // 스프라이트 이미지가 로드된 후 게임 시작
-    playerSprite.onload = function() {
-      gameLoop();
-    };
+    gameLoop();
   </script>
 </body>
 </html>
