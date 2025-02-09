@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Sonic-like 액션 게임 - 스테이지, 트로피, 더블점프 추가</title>
+  <title>Sonic-like 액션 게임 - 상점, 아이템, 몬스터 추가</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; background: #87CEEB; }
@@ -11,23 +11,25 @@
 <body>
   <canvas id="gameCanvas" width="800" height="400"></canvas>
   <script>
+    // 캔버스 및 컨텍스트
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // 전역 게임 변수
-    let stage = 1;               // 현재 스테이지 (1 ~ 3)
-    let platforms = [];          // 스테이지 내 벽돌(플랫폼) 배열
-    let trophy = {               // 트로피 객체 (정상에 위치)
-      x: 0,
-      y: 0,
-      width: 20,
-      height: 20
-    };
-    let levelWidth = 2000;       // 전체 레벨 너비 (스테이지마다 변경)
-    let cameraX = 0;             // 카메라(화면 스크롤) x좌표
-    let gameCompleted = false;   // 3스테이지 클리어 여부
+    // 기본 물리/플레이어 기본값
+    const baseSpeed = 5;
+    const baseJumpStrength = 15;
+    const baseGravity = 0.8;
+    let currentGravity = baseGravity;
 
-    // 플레이어 객체 (더블점프를 위한 jumpsLeft 추가)
+    // 게임 전역 변수
+    let stage = 1;            // 현재 스테이지 (1부터 시작, 무제한)
+    let score = 0;            // Trophy 획득 시 100점씩 증가 (상점 구매 재화)
+    let inShop = false;       // 상점 스테이지 여부 (stage % 3 === 0이면 상점)
+    let platforms = [];       // 현재 스테이지의 플랫폼 배열
+    let trophy = null;        // 트로피 객체 (일반 스테이지에서만 존재)
+    let monsters = [];        // 몬스터 배열 (일반 스테이지에서만 존재)
+
+    // 플레이어 객체 (더블점프를 위해 jumpsLeft 포함)
     let player = {
       x: 50,
       y: canvas.height - 60,
@@ -35,217 +37,378 @@
       height: 40,
       vx: 0,
       vy: 0,
-      speed: 5,
-      jumpStrength: 15,
-      onGround: false,
-      jumpsLeft: 2,  // 지면에서 점프 후 추가로 1회 더 점프 가능 (총 2번 점프)
-      // 애니메이션 관련 속성(추후 스프라이트 사용 시)
-      frameIndex: 0,
-      frameCount: 4,
-      frameCounter: 0,
-      frameDelay: 5
+      jumpsLeft: 2  // 지면 점프 + 공중 추가 점프
     };
 
-    const gravity = 0.8; // 중력
+    // 아이템(포션) 효과 관리 (각 효과의 만료 시각; 밀리초 단위)
+    let powerUps = {
+      fart: 0,   // 방구물약: 중력 감소(0.2) & 점프 1.5배
+      speed: 0,  // 스피드 물약: 기본 속도의 2배
+      jump: 0,   // 점프물약: 점프력 2배
+      wing: 0    // 날개물약: 중력 0 / 자유 비행
+    };
 
-    // 점프 키 중복 실행 방지를 위한 변수
-    let jumpPressed = false;
+    // 상점 아이템 가격 (원)
+    const ITEM_PRICES = {
+      fart: 700,
+      speed: 500,
+      jump: 700,
+      wing: 1000
+    };
 
-    // 키 입력 처리
+    // 아이템 효과 지속 시간 (밀리초)
+    const EFFECT_DURATION = 10 * 1000; // 10초
+
+    // 키 입력 상태
     let keys = {};
     window.addEventListener('keydown', (e) => { keys[e.code] = true; });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-    // 스테이지 로드 함수: 스테이지 번호에 따라 플랫폼 배열과 트로피 위치를 설정
-    function loadStage(s) {
-      platforms = [];  // 기존 플랫폼 초기화
-      if (s === 1) {
-        // [스테이지 1] : 2층 높이, 5개의 벽돌로 구성된 간단한 스테이지
-        platforms.push({ x: 150, y: canvas.height - 100, width: 100, height: 10 });
-        platforms.push({ x: 300, y: canvas.height - 160, width: 100, height: 10 });
-        platforms.push({ x: 450, y: canvas.height - 100, width: 100, height: 10 });
-        platforms.push({ x: 600, y: canvas.height - 160, width: 100, height: 10 });
-        platforms.push({ x: 750, y: canvas.height - 100, width: 100, height: 10 });
-        // 트로피는 2층에 위치한 두 번째 벽돌 위에 배치
-        trophy.x = platforms[1].x + platforms[1].width / 2 - trophy.width / 2;
-        trophy.y = platforms[1].y - trophy.height;
-        levelWidth = 750 + 100 + 150;  // 마지막 벽돌 위치 + 여유분
-        // 플레이어 초기 위치 및 더블점프 초기화
-        player.x = 50;
-        player.y = canvas.height - 60;
-        player.jumpsLeft = 2;
-      } else if (s === 2) {
-        // [스테이지 2] : 벽돌 간의 간격이 넓어지고, 수직 위치가 랜덤으로 배치됨
-        const count = 7;
-        let currentX = 150;
-        for (let i = 0; i < count; i++) {
-          // x 간격: 150 ~ 250 사이
-          let gap = Math.floor(Math.random() * 100) + 150;
-          if (i > 0) currentX += gap;
-          // y 위치: 200 ~ 320 (canvas.height=400, 지면은 canvas.height-20)
-          let y = Math.floor(Math.random() * (320 - 200 + 1)) + 200;
-          platforms.push({ x: currentX, y: y, width: 100, height: 10 });
-        }
-        let lastPlat = platforms[platforms.length - 1];
-        trophy.x = lastPlat.x + lastPlat.width / 2 - trophy.width / 2;
-        trophy.y = lastPlat.y - trophy.height;
-        levelWidth = currentX + 100 + 150;
-        player.x = 50;
-        player.y = canvas.height - 60;
-        player.jumpsLeft = 2;
-      } else if (s === 3) {
-        // [스테이지 3] : 높이가 더 높아지고, 간격이 좁거나 넓은 랜덤 배치
-        const count = 8;
-        let currentX = 150;
-        for (let i = 0; i < count; i++) {
-          // x 간격: 100 ~ 300 사이
-          let gap = Math.floor(Math.random() * 200) + 100;
-          if (i > 0) currentX += gap;
-          // y 위치: 100 ~ 320 (더 높은 높이의 플랫폼도 등장)
-          let y = Math.floor(Math.random() * (320 - 100 + 1)) + 100;
-          platforms.push({ x: currentX, y: y, width: 100, height: 10 });
-        }
-        let lastPlat = platforms[platforms.length - 1];
-        trophy.x = lastPlat.x + lastPlat.width / 2 - trophy.width / 2;
-        trophy.y = lastPlat.y - trophy.height;
-        levelWidth = currentX + 100 + 150;
-        player.x = 50;
-        player.y = canvas.height - 60;
-        player.jumpsLeft = 2;
-      }
-      console.log("Stage " + s + " loaded. Level width:", levelWidth);
-    }
+    // 상점 전용 중복 입력 방지 플래그
+    let shopKeyLock = {
+      Digit1: false,
+      Digit2: false,
+      Digit3: false,
+      Digit4: false,
+      Enter: false
+    };
 
-    // 첫번째 스테이지 초기화
+    // jumpPressed 플래그 (점프키 중복 방지)
+    let jumpPressed = false;
+
+    // 게임 초기화 및 스테이지 로드
     loadStage(stage);
 
-    // 게임 상태 업데이트
-    function update() {
-      if (gameCompleted) return;  // 게임 클리어 시 업데이트 중단
-
-      // 좌우 이동
-      if (keys['ArrowRight'] || keys['KeyD']) {
-        player.vx = player.speed;
-      } else if (keys['ArrowLeft'] || keys['KeyA']) {
-        player.vx = -player.speed;
-      } else {
+    // 스테이지 생성 함수
+    function loadStage(s) {
+      // 만약 스테이지 번호가 3의 배수라면 상점 스테이지로 전환
+      if (s % 3 === 0) {
+        inShop = true;
+        platforms = [];
+        monsters = [];
+        trophy = null;
+        // 상점 스테이지에서는 플레이어를 중앙에 배치 (움직임은 제한하지 않아도 됨)
+        player.x = canvas.width / 2 - player.width / 2;
+        player.y = canvas.height - 60;
         player.vx = 0;
-      }
-
-      // 더블점프 로직
-      // 점프키(위 방향, W, 스페이스)가 새로 눌렸을 때 실행 (한 번만 처리)
-      if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && !jumpPressed) {
-        if (player.jumpsLeft > 0) {
-          player.vy = -player.jumpStrength;
-          player.jumpsLeft--;
-          jumpPressed = true;
-        }
-      }
-      // 점프키가 눌리지 않으면 jumpPressed 플래그 리셋
-      if (!(keys['ArrowUp'] || keys['KeyW'] || keys['Space'])) {
-        jumpPressed = false;
-      }
-
-      // 중력 적용
-      player.vy += gravity;
-
-      // 플레이어 위치 업데이트
-      player.x += player.vx;
-      player.y += player.vy;
-
-      // 착지 여부 초기화
-      player.onGround = false;
-
-      // 플랫폼 충돌 처리 (플랫폼 위에 착지)
-      platforms.forEach((plat) => {
-        if (
-          player.x < plat.x + plat.width &&
-          player.x + player.width > plat.x &&
-          player.y + player.height > plat.y &&
-          player.y + player.height - player.vy <= plat.y
-        ) {
-          player.y = plat.y - player.height;
-          player.vy = 0;
-          player.onGround = true;
-        }
-      });
-
-      // 지면(바닥)과 충돌 처리 – 지면은 canvas 하단에서 20px 위쪽
-      if (player.y + player.height > canvas.height - 20) {
-        player.y = canvas.height - 20 - player.height;
         player.vy = 0;
-        player.onGround = true;
-      }
-
-      // 지면에 닿으면 더블점프 초기화
-      if (player.onGround) {
+      } else {
+        inShop = false;
+        platforms = [];
+        monsters = [];
+        // 일반 스테이지: 플랫폼(벽돌) 무작위 생성
+        // 플랫폼 개수를 5~10개로 정하고, x 간격과 y 위치를 랜덤하게 설정
+        let count = Math.floor(Math.random() * 6) + 5;  // 5 ~ 10개
+        let currentX = 150;
+        for (let i = 0; i < count; i++) {
+          let gap = Math.floor(Math.random() * 150) + 100;  // x 간격: 100 ~ 250
+          if (i > 0) currentX += gap;
+          // y 위치: 화면 상단에서 50px ~ (canvas.height - 100) 사이
+          let y = Math.floor(Math.random() * (canvas.height - 150)) + 50;
+          platforms.push({ x: currentX, y: y, width: 100, height: 10 });
+        }
+        // 트로피는 플랫폼 중 “가장 높은(화면상 y값이 작은)” 플랫폼 위에 배치
+        let highestPlatform = platforms[0];
+        for (let p of platforms) {
+          if (p.y < highestPlatform.y) highestPlatform = p;
+        }
+        trophy = {
+          x: highestPlatform.x + highestPlatform.width / 2 - 10,
+          y: highestPlatform.y - 20,
+          width: 20,
+          height: 20
+        };
+        // 레벨 너비: 마지막 플랫폼의 오른쪽 끝에 여유분 추가
+        levelWidth = currentX + 100 + 150;
+        // 몬스터 생성: 스테이지가 높아질수록 등장 수와 속도 증가
+        monsters = [];
+        let monsterCount = Math.floor(s / 2) + 1; // 최소 1마리부터 증가
+        for (let i = 0; i < monsterCount; i++) {
+          // 몬스터 x는 플랫폼 시작 이후 trophy보다 왼쪽에 위치하도록
+          let mX = Math.floor(Math.random() * ((trophy.x || 300) - 200)) + 200;
+          let mY = canvas.height - 20 - 30; // 몬스터 높이: 30
+          // 몬스터 속도: 1~3 (스테이지가 올라갈수록 약간 증가)
+          let mSpeed = (Math.random() * 2 + 1) + s * 0.1;
+          // 방향 무작위
+          let direction = (Math.random() < 0.5 ? -1 : 1);
+          monsters.push({
+            x: mX,
+            y: mY,
+            width: 30,
+            height: 30,
+            vx: direction * mSpeed
+          });
+        }
+        // 플레이어를 왼쪽 시작점에 배치하고 더블점프 횟수 초기화
+        player.x = 50;
+        player.y = canvas.height - 60;
+        player.vx = 0;
+        player.vy = 0;
         player.jumpsLeft = 2;
       }
+    }
 
-      // 레벨 경계 처리
-      if (player.x < 0) player.x = 0;
-      if (player.x + player.width > levelWidth) player.x = levelWidth - player.width;
+    // 게임 초기화 (몬스터 충돌 시 호출)
+    function resetGame() {
+      score = 0;
+      stage = 1;
+      // 모든 효과 종료
+      powerUps.fart = 0;
+      powerUps.speed = 0;
+      powerUps.jump = 0;
+      powerUps.wing = 0;
+      loadStage(stage);
+    }
 
-      // 카메라(화면 스크롤): 플레이어를 중심으로 이동
-      cameraX = player.x - canvas.width / 2;
-      if (cameraX < 0) cameraX = 0;
-      if (cameraX > levelWidth - canvas.width) cameraX = levelWidth - canvas.width;
+    // 메인 업데이트 함수
+    function update() {
+      let now = Date.now();
 
-      // 트로피 충돌 체크 (플레이어가 트로피에 닿으면 스테이지 전환)
-      if (
-        player.x < trophy.x + trophy.width &&
-        player.x + player.width > trophy.x &&
-        player.y < trophy.y + trophy.height &&
-        player.y + player.height > trophy.y
-      ) {
-        if (stage < 3) {
+      // 먼저 각 효과에 따른 값 계산
+      // 속도
+      let effectiveSpeed = (powerUps.speed > now) ? baseSpeed * 2 : baseSpeed;
+      // 중력 (wing potion 우선, 그 다음 방구물약)
+      if (powerUps.wing > now) {
+        currentGravity = 0;
+      } else if (powerUps.fart > now) {
+        currentGravity = 0.2;
+      } else {
+        currentGravity = baseGravity;
+      }
+      // 점프력 (jump potion 우선, 그 다음 방구물약)
+      let effectiveJump = baseJumpStrength;
+      if (powerUps.jump > now) {
+        effectiveJump = baseJumpStrength * 2;
+      } else if (powerUps.fart > now) {
+        effectiveJump = Math.floor(baseJumpStrength * 1.5);
+      }
+
+      if (inShop) {
+        updateShop(now);
+      } else {
+        // 일반 스테이지 업데이트
+
+        // 좌우 이동 (방향키 또는 WASD)
+        if (keys['ArrowRight'] || keys['KeyD']) {
+          player.vx = effectiveSpeed;
+        } else if (keys['ArrowLeft'] || keys['KeyA']) {
+          player.vx = -effectiveSpeed;
+        } else {
+          player.vx = 0;
+        }
+
+        // 만약 wing 효과가 활성화되어 있다면, 중력은 무시하고 상하 이동 허용
+        if (powerUps.wing > now) {
+          player.vy = 0; // 중력 없음
+          if (keys['ArrowUp']) {
+            player.y -= effectiveSpeed;
+          }
+          if (keys['ArrowDown']) {
+            player.y += effectiveSpeed;
+          }
+        } else {
+          // 점프 처리 (더블점프)
+          if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && !jumpPressed) {
+            if (player.jumpsLeft > 0) {
+              player.vy = -effectiveJump;
+              player.jumpsLeft--;
+              jumpPressed = true;
+            }
+          }
+          if (!(keys['ArrowUp'] || keys['KeyW'] || keys['Space'])) {
+            jumpPressed = false;
+          }
+          // 중력 적용 (wing 모드가 아니라면)
+          player.vy += currentGravity;
+        }
+
+        // 플레이어 위치 업데이트
+        player.x += player.vx;
+        player.y += player.vy;
+
+        // 플랫폼과의 충돌 처리 (플랫폼 위에 착지)
+        let landed = false;
+        for (let plat of platforms) {
+          if (
+            player.x < plat.x + plat.width &&
+            player.x + player.width > plat.x &&
+            player.y + player.height > plat.y &&
+            player.y + player.height - player.vy <= plat.y
+          ) {
+            player.y = plat.y - player.height;
+            player.vy = 0;
+            landed = true;
+          }
+        }
+        // 바닥(지면)과의 충돌 처리 – 지면은 canvas 하단 20px 위쪽
+        if (player.y + player.height > canvas.height - 20) {
+          player.y = canvas.height - 20 - player.height;
+          player.vy = 0;
+          landed = true;
+        }
+        if (landed) {
+          player.jumpsLeft = 2;
+        }
+
+        // 레벨 경계 처리
+        if (player.x < 0) player.x = 0;
+        if (player.x + player.width > levelWidth) player.x = levelWidth - player.width;
+
+        // 카메라(화면 스크롤): 플레이어를 중심으로 이동
+        cameraX = player.x - canvas.width / 2;
+        if (cameraX < 0) cameraX = 0;
+        if (cameraX > levelWidth - canvas.width) cameraX = levelWidth - canvas.width;
+
+        // 트로피와 충돌하면 score 100점 획득 후 다음 스테이지로 이동
+        if (trophy &&
+            player.x < trophy.x + trophy.width &&
+            player.x + player.width > trophy.x &&
+            player.y < trophy.y + trophy.height &&
+            player.y + player.height > trophy.y) {
+          score += 100;
           stage++;
           loadStage(stage);
-        } else {
-          gameCompleted = true;
-          console.log("게임 클리어!");
+          return; // 아래 몬스터 충돌 체크는 건너뜀
+        }
+
+        // 몬스터 업데이트 및 충돌 체크
+        for (let m of monsters) {
+          m.x += m.vx;
+          // 몬스터가 레벨 경계를 벗어나면 방향 전환
+          if (m.x < 0 || m.x + m.width > levelWidth) {
+            m.vx *= -1;
+          }
+          // 플레이어와 몬스터 충돌 체크
+          if (
+            player.x < m.x + m.width &&
+            player.x + player.width > m.x &&
+            player.y < m.y + m.height &&
+            player.y + player.height > m.y
+          ) {
+            // 충돌 시 게임 리셋
+            resetGame();
+            return;
+          }
+        }
+      } // end of inShop==false
+    }
+
+    // 상점 스테이지 업데이트 (키 입력에 따라 아이템 구매 및 진행)
+    function updateShop(now) {
+      // 상점에서는 플레이어의 움직임은 고정시키고, 단지 키 입력(숫자키, Enter)로 아이템 구매를 처리합니다.
+      // Digit1: 방구물약, Digit2: 스피드 물약, Digit3: 점프물약, Digit4: 날개물약
+      // 각 키에 대해 한 번만 처리하도록 shopKeyLock 플래그 사용
+
+      // 방구물약 (Digit1)
+      if (keys['Digit1'] && !shopKeyLock.Digit1) {
+        shopKeyLock.Digit1 = true;
+        if (score >= ITEM_PRICES.fart) {
+          score -= ITEM_PRICES.fart;
+          powerUps.fart = now + EFFECT_DURATION;
+          console.log("방구물약 구매!");
         }
       }
+      if (!keys['Digit1']) { shopKeyLock.Digit1 = false; }
+
+      // 스피드 물약 (Digit2)
+      if (keys['Digit2'] && !shopKeyLock.Digit2) {
+        shopKeyLock.Digit2 = true;
+        if (score >= ITEM_PRICES.speed) {
+          score -= ITEM_PRICES.speed;
+          powerUps.speed = now + EFFECT_DURATION;
+          console.log("스피드 물약 구매!");
+        }
+      }
+      if (!keys['Digit2']) { shopKeyLock.Digit2 = false; }
+
+      // 점프물약 (Digit3)
+      if (keys['Digit3'] && !shopKeyLock.Digit3) {
+        shopKeyLock.Digit3 = true;
+        if (score >= ITEM_PRICES.jump) {
+          score -= ITEM_PRICES.jump;
+          powerUps.jump = now + EFFECT_DURATION;
+          console.log("점프물약 구매!");
+        }
+      }
+      if (!keys['Digit3']) { shopKeyLock.Digit3 = false; }
+
+      // 날개물약 (Digit4)
+      if (keys['Digit4'] && !shopKeyLock.Digit4) {
+        shopKeyLock.Digit4 = true;
+        if (score >= ITEM_PRICES.wing) {
+          score -= ITEM_PRICES.wing;
+          powerUps.wing = now + EFFECT_DURATION;
+          console.log("날개물약 구매!");
+        }
+      }
+      if (!keys['Digit4']) { shopKeyLock.Digit4 = false; }
+
+      // Enter 키를 누르면 상점을 종료하고 다음 스테이지로 진행
+      if (keys['Enter'] && !shopKeyLock.Enter) {
+        shopKeyLock.Enter = true;
+        stage++;
+        loadStage(stage);
+      }
+      if (!keys['Enter']) { shopKeyLock.Enter = false; }
     }
 
     // 화면 그리기 함수
+    let cameraX = 0;
     function draw() {
       // 캔버스 전체 지우기
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+      
       // 배경 그리기
       ctx.fillStyle = '#87CEEB';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // 카메라 적용 (레벨 좌표 기준으로 그리기)
-      ctx.save();
-      ctx.translate(-cameraX, 0);
-
-      // 지면 그리기
-      ctx.fillStyle = '#654321';
-      ctx.fillRect(0, canvas.height - 20, levelWidth, 20);
-
-      // 플랫폼(벽돌) 그리기
-      platforms.forEach((plat) => {
-        ctx.fillStyle = '#8B4513';
-        ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
-      });
-
-      // 트로피 그리기 (금색 사각형)
-      ctx.fillStyle = 'gold';
-      ctx.fillRect(trophy.x, trophy.y, trophy.width, trophy.height);
-
-      // 플레이어 그리기 (파란색 사각형; 필요 시 스프라이트로 교체 가능)
-      ctx.fillStyle = 'blue';
-      ctx.fillRect(player.x, player.y, player.width, player.height);
-
-      ctx.restore();
-
-      // 게임 클리어 시 화면 중앙에 메시지 출력
-      if (gameCompleted) {
+      if (inShop) {
+        // 상점 스테이지 그리기
         ctx.fillStyle = 'black';
-        ctx.font = '40px Arial';
-        ctx.fillText("게임 클리어!", canvas.width / 2 - 100, canvas.height / 2);
+        ctx.font = '24px Arial';
+        ctx.fillText("=== 상점 ===", 20, 40);
+        ctx.font = '18px Arial';
+        ctx.fillText("1: 방구물약 (700원) - 중력 감소 & 점프 강화", 20, 80);
+        ctx.fillText("2: 스피드 물약 (500원) - 10초간 속도 2배", 20, 110);
+        ctx.fillText("3: 점프물약 (700원) - 10초간 점프력 2배", 20, 140);
+        ctx.fillText("4: 날개물약 (1000원) - 10초간 중력 0, 자유 비행", 20, 170);
+        ctx.fillText("현재 소지금: " + score + "원", 20, 210);
+        ctx.fillText("구매 후 또는 구매하지 않으려면 [Enter] 키를 누르세요.", 20, 250);
+        // 상점 스테이지에서는 플레이어 캐릭터도 간단히 표시
+        ctx.fillStyle = 'blue';
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+      } else {
+        // 일반 스테이지 그리기 (카메라 적용)
+        ctx.save();
+        ctx.translate(-cameraX, 0);
+        // 지면 그리기
+        ctx.fillStyle = '#654321';
+        ctx.fillRect(0, canvas.height - 20, levelWidth, 20);
+        // 플랫폼 그리기
+        for (let plat of platforms) {
+          ctx.fillStyle = '#8B4513';
+          ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+        }
+        // 트로피 그리기 (금색)
+        if (trophy) {
+          ctx.fillStyle = 'gold';
+          ctx.fillRect(trophy.x, trophy.y, trophy.width, trophy.height);
+        }
+        // 몬스터 그리기 (빨간색)
+        for (let m of monsters) {
+          ctx.fillStyle = 'red';
+          ctx.fillRect(m.x, m.y, m.width, m.height);
+        }
+        // 플레이어 그리기 (파란색)
+        ctx.fillStyle = 'blue';
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+        ctx.restore();
+
+        // 화면 상단에 현재 점수와 스테이지 정보 출력
+        ctx.fillStyle = 'black';
+        ctx.font = '20px Arial';
+        ctx.fillText("점수: " + score, 20, 30);
+        ctx.fillText("스테이지: " + stage, 20, 60);
       }
     }
 
@@ -255,7 +418,6 @@
       draw();
       requestAnimationFrame(gameLoop);
     }
-
     gameLoop();
   </script>
 </body>
